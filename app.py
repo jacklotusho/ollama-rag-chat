@@ -17,12 +17,39 @@ logger = logging.getLogger(__name__)
 def initialize_session_state():
     """Initialize Streamlit session state variables."""
     if 'vector_store_manager' not in st.session_state:
-        st.session_state.vector_store_manager = None
+        # Try to load existing vector store on startup
+        try:
+            vector_store_manager = VectorStoreManager()
+            loaded_store = vector_store_manager.load_vector_store()
+            if loaded_store is not None:
+                st.session_state.vector_store_manager = vector_store_manager
+                st.session_state.documents_loaded = True
+                logger.info("Loaded existing vector store on startup")
+            else:
+                st.session_state.vector_store_manager = None
+                st.session_state.documents_loaded = False
+        except Exception as e:
+            logger.warning(f"Could not load vector store on startup: {str(e)}")
+            st.session_state.vector_store_manager = None
+            st.session_state.documents_loaded = False
+    
     if 'rag_chain' not in st.session_state:
-        # Initialize RAG chain without documents for direct LLM access
-        st.session_state.rag_chain = RAGChain()
+        # Initialize RAG chain with vector store if available
+        if st.session_state.get('documents_loaded', False) and st.session_state.vector_store_manager:
+            rag_chain = RAGChain(st.session_state.vector_store_manager)
+            # Ensure the RAG chain is properly initialized with the loaded vector store
+            if rag_chain.rag_chain is None:
+                rag_chain.reinitialize_chain()
+            st.session_state.rag_chain = rag_chain
+            logger.info("RAG chain initialized with loaded vector store")
+        else:
+            # Initialize RAG chain without documents for direct LLM access
+            st.session_state.rag_chain = RAGChain()
+            logger.info("RAG chain initialized in direct LLM mode")
+    
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    
     if 'documents_loaded' not in st.session_state:
         st.session_state.documents_loaded = False
 
