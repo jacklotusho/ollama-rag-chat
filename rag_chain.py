@@ -67,13 +67,20 @@ class RAGChain:
         
         try:
             # Custom prompt template for RAG
-            prompt_template = """Use the following pieces of context to answer the question at the end. 
-If you don't know the answer based on the context, just say that you don't know, don't try to make up an answer.
+            prompt_template = """You are a helpful AI assistant. Answer the question using the provided context.
 
 Context:
 {context}
 
 Question: {question}
+
+Instructions:
+- Provide a comprehensive answer based on the context
+- If the question asks for code but the context doesn't contain code, explain what the context does contain and offer to help based on that information
+- Include all relevant details, examples, and technical information from the context
+- If the context is related to the question but doesn't have the exact answer requested, provide the relevant information you do have
+- Be helpful and informative rather than simply saying you don't know
+- Format your response clearly with proper structure
 
 Answer: """
             
@@ -105,14 +112,21 @@ Answer: """
     def _is_relevant_context(self, sources: list, question: str) -> bool:
         """Check if retrieved sources are relevant to the question."""
         if not sources:
+            logger.info("No sources retrieved")
             return False
         
         # Simple heuristic: check if any source has reasonable length
         # In production, you might want more sophisticated relevance checking
+        has_relevant = False
         for source in sources:
-            if len(source.page_content.strip()) > 50:
-                return True
-        return False
+            content_length = len(source.page_content.strip())
+            logger.debug(f"Source content length: {content_length}")
+            if content_length > 50:
+                has_relevant = True
+                break
+        
+        logger.info(f"Relevant context found: {has_relevant} (checked {len(sources)} sources)")
+        return has_relevant
     
     def query(self, question: str, use_rag: bool = True) -> Dict[str, Any]:
         """
@@ -127,15 +141,21 @@ Answer: """
         """
         try:
             logger.info(f"Processing query: {question}")
+            logger.info(f"RAG chain available: {self.rag_chain is not None}")
+            logger.info(f"Retriever available: {self.retriever is not None}")
+            logger.info(f"Use RAG: {use_rag}")
             
             # Try RAG first if available and requested
             if use_rag and self.rag_chain is not None and self.retriever is not None:
                 try:
+                    logger.info("Attempting to retrieve documents...")
                     # Get source documents
                     source_documents = self.retriever.invoke(question)
+                    logger.info(f"Retrieved {len(source_documents)} documents")
                     
                     # Check if we have relevant context
                     if self._is_relevant_context(source_documents, question):
+                        logger.info("Using RAG to generate answer...")
                         # Use RAG
                         answer = self.rag_chain.invoke(question)
                         
@@ -149,7 +169,7 @@ Answer: """
                             }
                             sources.append(source_info)
                         
-                        logger.info(f"RAG query processed with {len(sources)} sources")
+                        logger.info(f"RAG query processed successfully with {len(sources)} sources")
                         
                         return {
                             "answer": answer,
@@ -161,11 +181,14 @@ Answer: """
                         logger.info("No relevant context found, falling back to direct LLM")
                 
                 except Exception as e:
-                    logger.warning(f"RAG query failed, falling back to direct LLM: {str(e)}")
+                    logger.warning(f"RAG query failed, falling back to direct LLM: {str(e)}", exc_info=True)
+            else:
+                logger.info("RAG not available or not requested, using direct LLM")
             
             # Fallback to direct LLM
+            logger.info("Using direct LLM to generate answer...")
             answer = self.direct_chain.invoke({"question": question})
-            logger.info("Direct LLM query processed")
+            logger.info("Direct LLM query processed successfully")
             
             return {
                 "answer": answer,
@@ -175,7 +198,7 @@ Answer: """
             }
             
         except Exception as e:
-            logger.error(f"Error processing query: {str(e)}")
+            logger.error(f"Error processing query: {str(e)}", exc_info=True)
             raise
     
     def update_model(self, model: str) -> None:

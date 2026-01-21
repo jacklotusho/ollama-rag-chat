@@ -68,7 +68,18 @@ class VectorStoreManager:
                 persist_directory=config.chroma_persist_directory
             )
             
-            logger.info("Loaded existing vector store")
+            # Check if the collection has documents
+            try:
+                collection = self.vector_store._collection
+                count = collection.count()
+                logger.info(f"Loaded existing vector store with {count} documents")
+                
+                if count == 0:
+                    logger.warning("Vector store loaded but contains no documents")
+                    return None
+            except Exception as e:
+                logger.warning(f"Could not verify document count: {str(e)}")
+            
             return self.vector_store
             
         except Exception as e:
