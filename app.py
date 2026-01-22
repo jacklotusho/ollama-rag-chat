@@ -197,6 +197,7 @@ def setup_sidebar():
                 st.session_state.vector_store_manager.delete_collection()
                 st.session_state.documents_loaded = False
                 st.session_state.chat_history = []
+                st.session_state.rag_chain = RAGChain()
                 st.success("Vector store cleared!")
             else:
                 st.warning("No vector store to clear")
@@ -308,7 +309,7 @@ def chat_interface():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    result = st.session_state.rag_chain.query(question)
+                    result = st.session_state.rag_chain.query(question, use_rag=st.session_state.get('documents_loaded', False))
                     answer = result["answer"]
                     sources = result.get("sources", [])
                     method = result.get("method", "unknown")

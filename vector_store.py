@@ -150,12 +150,20 @@ class VectorStoreManager:
         )
     
     def delete_collection(self) -> None:
-        """Delete the vector store collection."""
+        """Delete the vector store collection and remove persist directory."""
+        import shutil
         try:
             if self.vector_store is not None:
                 self.vector_store.delete_collection()
                 self.vector_store = None
-                logger.info("Deleted vector store collection")
+            
+            # Physically remove the directory
+            persist_path = Path(config.chroma_persist_directory)
+            if persist_path.exists():
+                shutil.rmtree(persist_path)
+                logger.info(f"Removed persist directory: {config.chroma_persist_directory}")
+                
+            logger.info("Deleted vector store collection and cleared disk storage")
         except Exception as e:
             logger.error(f"Error deleting collection: {str(e)}")
             raise
