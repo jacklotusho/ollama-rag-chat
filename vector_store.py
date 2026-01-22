@@ -2,10 +2,14 @@
 from typing import List, Optional
 import logging
 from pathlib import Path
+import shutil
+import os
 
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
+import chromadb
+from chromadb.config import Settings
 
 from config import config
 
@@ -19,7 +23,34 @@ class VectorStoreManager:
     def __init__(self):
         self.embeddings = None
         self.vector_store = None
+        self._ensure_persist_directory()
         self._initialize_embeddings()
+    
+    def _ensure_persist_directory(self) -> None:
+        """Ensure the persist directory exists with proper permissions."""
+        try:
+            persist_path = Path(config.chroma_persist_directory)
+            
+            # If directory exists and might be corrupted, remove it
+            if persist_path.exists():
+                # Check if it's empty or has issues
+                try:
+                    # Try to list contents
+                    list(persist_path.iterdir())
+                except (OSError, PermissionError) as e:
+                    logger.warning(f"Persist directory has issues, recreating: {e}")
+                    shutil.rmtree(persist_path, ignore_errors=True)
+            
+            # Create directory with proper permissions
+            persist_path.mkdir(parents=True, exist_ok=True)
+            
+            # Ensure directory is writable
+            os.chmod(persist_path, 0o755)
+            
+            logger.info(f"Persist directory ready: {config.chroma_persist_directory}")
+        except Exception as e:
+            logger.error(f"Error setting up persist directory: {str(e)}")
+            raise
     
     def _initialize_embeddings(self) -> None:
         """Initialize Ollama embeddings."""
@@ -36,14 +67,30 @@ class VectorStoreManager:
     def create_vector_store(self, documents: List[Document]) -> Chroma:
         """Create a new vector store from documents."""
         try:
-            # Ensure persist directory exists
-            Path(config.chroma_persist_directory).mkdir(parents=True, exist_ok=True)
+            # Ensure persist directory is ready
+            self._ensure_persist_directory()
             
+            # Create ChromaDB client with explicit settings
+            client_settings = Settings(
+                persist_directory=config.chroma_persist_directory,
+                anonymized_telemetry=False,
+                allow_reset=True,
+                is_persistent=True
+            )
+            
+            # Create persistent client
+            client = chromadb.PersistentClient(
+                path=config.chroma_persist_directory,
+                settings=client_settings
+            )
+            
+            # Create vector store with the client
             self.vector_store = Chroma.from_documents(
                 documents=documents,
                 embedding=self.embeddings,
                 collection_name=config.collection_name,
-                persist_directory=config.chroma_persist_directory
+                persist_directory=config.chroma_persist_directory,
+                client=client
             )
             
             logger.info(f"Created vector store with {len(documents)} documents")
@@ -51,6 +98,14 @@ class VectorStoreManager:
             
         except Exception as e:
             logger.error(f"Error creating vector store: {str(e)}")
+            # Try to clean up on failure
+            try:
+                persist_path = Path(config.chroma_persist_directory)
+                if persist_path.exists():
+                    shutil.rmtree(persist_path, ignore_errors=True)
+                    logger.info("Cleaned up failed vector store directory")
+            except Exception as cleanup_error:
+                logger.warning(f"Could not clean up directory: {cleanup_error}")
             raise
     
     def load_vector_store(self) -> Optional[Chroma]:
@@ -62,10 +117,30 @@ class VectorStoreManager:
                 logger.warning(f"Vector store directory not found: {config.chroma_persist_directory}")
                 return None
             
+            # Check if directory has any content
+            if not any(persist_path.iterdir()):
+                logger.warning("Vector store directory is empty")
+                return None
+            
+            # Create ChromaDB client with explicit settings
+            client_settings = Settings(
+                persist_directory=config.chroma_persist_directory,
+                anonymized_telemetry=False,
+                allow_reset=True,
+                is_persistent=True
+            )
+            
+            # Create persistent client
+            client = chromadb.PersistentClient(
+                path=config.chroma_persist_directory,
+                settings=client_settings
+            )
+            
             self.vector_store = Chroma(
                 collection_name=config.collection_name,
                 embedding_function=self.embeddings,
-                persist_directory=config.chroma_persist_directory
+                persist_directory=config.chroma_persist_directory,
+                client=client
             )
             
             # Check if the collection has documents
@@ -99,7 +174,7 @@ class VectorStoreManager:
                 logger.error(f"Error adding documents: {str(e)}")
                 raise
     
-    def similarity_search_with_threshold(self, query: str, k: int = None, threshold: float = None) -> List[Document]:
+    def similarity_search_with_threshold(self, query: str, k: Optional[int] = None, threshold: Optional[float] = None) -> List[Document]:
         """Search for similar documents and filter by threshold."""
         if self.vector_store is None:
             raise ValueError("Vector store not initialized")
@@ -132,7 +207,7 @@ class VectorStoreManager:
             logger.error(f"Error during similarity search with threshold: {str(e)}")
             raise
     
-    def get_retriever(self, k: int = None, threshold: float = None):
+    def get_retriever(self, k: Optional[int] = None, threshold: Optional[float] = None):
         """Get a retriever for the vector store."""
         if self.vector_store is None:
             raise ValueError("Vector store not initialized")
