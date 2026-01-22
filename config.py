@@ -21,6 +21,7 @@ class Config:
         
         # Retrieval configuration
         self.top_k_results: int = int(os.getenv("TOP_K_RESULTS", "4"))
+        self.similarity_threshold: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.5"))
         
     def update_ollama_url(self, url: str) -> None:
         """Update the Ollama base URL."""

@@ -162,15 +162,30 @@ def setup_sidebar():
         top_k = st.number_input(
             "Top K Results",
             min_value=1,
-            max_value=10,
+            max_value=20,
             value=config.top_k_results,
             help="Number of relevant documents to retrieve"
+        )
+        
+        similarity_threshold = st.slider(
+            "Similarity Threshold",
+            min_value=0.0,
+            max_value=1.0,
+            value=config.similarity_threshold,
+            step=0.05,
+            help="Minimum similarity score for a document to be considered relevant (higher is stricter)"
         )
         
         if st.button("Update Document Settings"):
             config.chunk_size = chunk_size
             config.chunk_overlap = chunk_overlap
             config.top_k_results = top_k
+            config.similarity_threshold = similarity_threshold
+            
+            # Recreate RAG chain to apply new settings to retriever
+            if st.session_state.vector_store_manager:
+                st.session_state.rag_chain = RAGChain(st.session_state.vector_store_manager)
+            
             st.success("Document settings updated!")
         
         st.divider()
@@ -260,8 +275,12 @@ def chat_interface():
             if message["role"] == "assistant" and "method" in message:
                 if message["method"] == "rag":
                     st.caption("🔍 Answer from documents")
-                else:
+                elif message["method"] == "retrieval_fallback":
+                    st.caption("⚠️ Fallback: No relevant documents found. Answer generated from general knowledge.")
+                elif message["method"] == "direct_llm":
                     st.caption("🤖 Direct LLM answer")
+                else:
+                    st.caption(f"ℹ️ Method: {message['method']}")
             
             # Show sources if available
             if message["role"] == "assistant" and "sources" in message and message["sources"]:
@@ -299,8 +318,12 @@ def chat_interface():
                     # Show method badge
                     if method == "rag":
                         st.caption("🔍 Answer from documents")
-                    else:
+                    elif method == "retrieval_fallback":
+                        st.caption("⚠️ Fallback: No relevant documents found. Answer generated from general knowledge.")
+                    elif method == "direct_llm":
                         st.caption("🤖 Direct LLM answer")
+                    else:
+                        st.caption(f"ℹ️ Method: {method}")
                     
                     # Add assistant message to chat
                     st.session_state.chat_history.append({

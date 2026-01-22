@@ -2,12 +2,12 @@
 
 A powerful Retrieval-Augmented Generation (RAG) chat application that allows you to chat with your documents using Ollama and LangChain.
 
-## ✨ Features
-
-- 📄 **Document Processing**: Upload and process PDF, TXT, and Markdown files
+- 📄 **Document Processing**: Upload and process PDF, TXT, and Markdown files with automatic cleaning
 - 🔍 **Semantic Search**: Uses ChromaDB for efficient vector storage and retrieval
-- 💬 **Interactive Chat**: Natural conversation interface with context-aware responses
-- ⚙️ **Configurable Ollama**: Easily configure Ollama URL and model selection
+- � **Stop-First RAG**: Prevents hallucinations by evaluating context relevance before generation
+- 🏠 **Hybrid Fallback**: Gracefully falls back to general knowledge if no relevant document context is found
+- �💬 **Interactive Chat**: Natural conversation interface with mode-specific indicators (RAG vs. Fallback)
+- ⚙️ **Configurable Ollama**: Easily configure Ollama URL, model selection, and similarity thresholds
 - 📚 **Source Citations**: View the source documents used to generate each answer
 - 🎨 **Modern UI**: Clean and intuitive Streamlit interface
 
@@ -93,6 +93,7 @@ Adjust document processing parameters:
 - **Chunk Size**: Size of text chunks (default: 1000)
 - **Chunk Overlap**: Overlap between chunks (default: 200)
 - **Top K Results**: Number of relevant documents to retrieve (default: 4)
+- **Similarity Threshold**: Minimum relevance score for a document to be used (default: 0.5)
 
 ## 🔧 Configuration
 
@@ -113,6 +114,9 @@ export COLLECTION_NAME="documents"
 export CHUNK_SIZE="1000"
 export CHUNK_OVERLAP="200"
 export TOP_K_RESULTS="4"
+
+# Retrieval Protection
+export SIMILARITY_THRESHOLD="0.5"
 ```
 
 ### Configuration File
@@ -138,30 +142,23 @@ ollama-rag-chat/
 
 The application follows a standard RAG workflow:
 
-1. **Document Processing**: Documents are loaded and split into chunks
-2. **Embedding**: Text chunks are converted to embeddings using Ollama
-3. **Vector Storage**: Embeddings are stored in ChromaDB for efficient retrieval
-4. **Query Processing**: User questions are embedded and similar chunks are retrieved
-5. **Answer Generation**: Retrieved context is used to generate accurate answers
+1. **Document Processing**: Documents are loaded, cleaned (whitespace/noise removal), and split into semantic chunks.
+2. **Embedding**: Text chunks are converted to embeddings using Ollama.
+3. **Vector Storage**: Embeddings are stored in ChromaDB for efficient retrieval.
+4. **Query & Retrieval**: User questions are embedded; the top K similar chunks are retrieved and filtered by a **Similarity Threshold**.
+5. **Stop-First Evaluation**: The system evaluates if the retrieved context is relevant and meaningful.
+6. **Hybrid Generation**:
+    - **RAG Mode**: If relevant context exists, a strict prompt forces the LLM to answer using only the provided data.
+    - **Fallback Mode**: If no relevant context is found, the system alerts the user and falls back to a general LLM query to remain helpful.
 
 ```
 ┌─────────────┐
-│  Documents  │
+│  Documents  │───► [Text Cleaning & Semantic Chunking]
 └──────┬──────┘
        │
        ▼
 ┌─────────────┐
-│  Chunking   │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  Embeddings │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│  ChromaDB   │
+│  ChromaDB   │◄─── [Vector Storage]
 └──────┬──────┘
        │
        ▼
@@ -171,14 +168,25 @@ The application follows a standard RAG workflow:
        │
        ▼
 ┌─────────────┐
-│   Ollama    │
-│    LLM      │
+│ Stop-First  │───► [Score Threshold Check]
+│ Evaluation  │
 └──────┬──────┘
        │
-       ▼
-┌─────────────┐
-│   Answer    │
-└─────────────┘
+       ├─ [Relevant Context Found] ──────┐
+       │                                 │
+       ▼                                 ▼
+┌─────────────┐                   ┌─────────────┐
+│  RAG Mode   │                   │  Fallback   │
+│ (Strict)    │                   │   Mode      │
+└──────┬──────┘                   └──────┬──────┘
+       │                                 │
+       └────────────────┬────────────────┘
+                        │
+                        ▼
+                 ┌─────────────┐
+                 │   Answer    │
+                 │ (with Badge)│
+                 └─────────────┘
 ```
 
 ## 🔌 Ollama Models

@@ -67,7 +67,7 @@ class RAGChain:
         
         try:
             # Custom prompt template for RAG
-            prompt_template = """You are a helpful AI assistant. Answer the question using the provided context.
+            prompt_template = """You are a helpful AI assistant. Use ONLY the provided context to answer the question. 
 
 Context:
 {context}
@@ -75,12 +75,11 @@ Context:
 Question: {question}
 
 Instructions:
-- Provide a comprehensive answer based on the context
-- If the question asks for code but the context doesn't contain code, explain what the context does contain and offer to help based on that information
-- Include all relevant details, examples, and technical information from the context
-- If the context is related to the question but doesn't have the exact answer requested, provide the relevant information you do have
-- Be helpful and informative rather than simply saying you don't know
-- Format your response clearly with proper structure
+1. If the answer is contained within the context, provide a concise and accurate response.
+2. If the answer cannot be found in the provided context, OR if the context is empty or irrelevant, strictly respond with: "I do not have enough information to answer this question based on the provided documents."
+3. Do NOT use any external or internal knowledge not present in the context.
+4. Do NOT make up facts or fabricate information.
+5. If the context is empty, simply state that no information was found.
 
 Answer: """
             
@@ -109,24 +108,26 @@ Answer: """
             logger.error(f"Error creating RAG chain: {str(e)}")
             raise
     
-    def _is_relevant_context(self, sources: list, question: str) -> bool:
-        """Check if retrieved sources are relevant to the question."""
+    def _is_relevant_context(self, sources: list) -> bool:
+        """Check if retrieved sources are inherently empty or missing."""
         if not sources:
-            logger.info("No sources retrieved")
+            logger.info("No sources retrieved from vector store")
             return False
         
-        # Simple heuristic: check if any source has reasonable length
-        # In production, you might want more sophisticated relevance checking
-        has_relevant = False
+        # Check if all sources are just whitespace or extremely short
+        has_content = False
         for source in sources:
-            content_length = len(source.page_content.strip())
-            logger.debug(f"Source content length: {content_length}")
-            if content_length > 50:
-                has_relevant = True
+            content = source.page_content.strip()
+            if len(content) > 10:  # Minimum character count to be considered useful
+                has_content = True
                 break
         
-        logger.info(f"Relevant context found: {has_relevant} (checked {len(sources)} sources)")
-        return has_relevant
+        if not has_content:
+            logger.info("Retrieved sources contain no meaningful content")
+            return False
+            
+        logger.info(f"Found {len(sources)} potentially relevant sources")
+        return True
     
     def query(self, question: str, use_rag: bool = True) -> Dict[str, Any]:
         """
@@ -140,21 +141,25 @@ Answer: """
             Dict with answer, sources, question, and method used
         """
         try:
-            logger.info(f"Processing query: {question}")
-            logger.info(f"RAG chain available: {self.rag_chain is not None}")
-            logger.info(f"Retriever available: {self.retriever is not None}")
-            logger.info(f"Use RAG: {use_rag}")
-            
-            # Try RAG first if available and requested
-            if use_rag and self.rag_chain is not None and self.retriever is not None:
+            # RAG flow
+            if use_rag:
+                if self.rag_chain is None or self.retriever is None:
+                    return {
+                        "answer": "RAG system is not initialized. Please upload documents first.",
+                        "sources": [],
+                        "question": question,
+                        "method": "error"
+                    }
+
                 try:
                     logger.info("Attempting to retrieve documents...")
                     # Get source documents
+                    # The retriever already filters by similarity threshold if configured
                     source_documents = self.retriever.invoke(question)
                     logger.info(f"Retrieved {len(source_documents)} documents")
                     
-                    # Check if we have relevant context
-                    if self._is_relevant_context(source_documents, question):
+                    # Check if we have relevant context ("Stop-First" check)
+                    if self._is_relevant_context(source_documents):
                         logger.info("Using RAG to generate answer...")
                         # Use RAG
                         answer = self.rag_chain.invoke(question)
@@ -178,14 +183,26 @@ Answer: """
                             "method": "rag"
                         }
                     else:
-                        logger.info("No relevant context found, falling back to direct LLM")
+                        logger.info("Stop-First intervention: No relevant context found. Falling back to direct LLM.")
+                        # Fallback to direct LLM
+                        answer = self.direct_chain.invoke({"question": question})
+                        return {
+                            "answer": answer,
+                            "sources": [],
+                            "question": question,
+                            "method": "retrieval_fallback"
+                        }
                 
                 except Exception as e:
-                    logger.warning(f"RAG query failed, falling back to direct LLM: {str(e)}", exc_info=True)
-            else:
-                logger.info("RAG not available or not requested, using direct LLM")
+                    logger.warning(f"RAG query failed: {str(e)}", exc_info=True)
+                    return {
+                        "answer": f"An error occurred during retrieval: {str(e)}",
+                        "sources": [],
+                        "question": question,
+                        "method": "error"
+                    }
             
-            # Fallback to direct LLM
+            # Direct LLM flow (only if use_rag is False)
             logger.info("Using direct LLM to generate answer...")
             answer = self.direct_chain.invoke({"question": question})
             logger.info("Direct LLM query processed successfully")

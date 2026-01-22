@@ -21,7 +21,7 @@ class DocumentProcessor:
             chunk_size=config.chunk_size,
             chunk_overlap=config.chunk_overlap,
             length_function=len,
-            separators=["\n\n", "\n", " ", ""]
+            separators=["\n\n", "\n", ". ", "? ", "! ", " ", ""]
         )
     
     def load_document(self, file_path: str) -> List[Document]:
@@ -49,12 +49,31 @@ class DocumentProcessor:
             logger.error(f"Error loading document {file_path}: {str(e)}")
             raise
     
+    def _clean_text(self, text: str) -> str:
+        """Clean text by removing excessive whitespace and common noise."""
+        import re
+        # Remove multiple newlines
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Remove multiple spaces
+        text = re.sub(r' {2,}', ' ', text)
+        # Remove common PDF artifacts or weird characters if necessary
+        # (This is a basic implementation, can be expanded)
+        return text.strip()
+
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
-        """Split documents into chunks."""
+        """Split documents into chunks with cleaning."""
         try:
+            # Clean document content before splitting
+            for doc in documents:
+                doc.page_content = self._clean_text(doc.page_content)
+            
             chunks = self.text_splitter.split_documents(documents)
-            logger.info(f"Created {len(chunks)} chunks from {len(documents)} document(s)")
-            return chunks
+            
+            # Additional filtering for very small chunks that might be noise
+            filtered_chunks = [chunk for chunk in chunks if len(chunk.page_content.strip()) > 50]
+            
+            logger.info(f"Created {len(filtered_chunks)} cleaned chunks from {len(documents)} document(s)")
+            return filtered_chunks
         except Exception as e:
             logger.error(f"Error chunking documents: {str(e)}")
             raise

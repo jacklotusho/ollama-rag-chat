@@ -99,28 +99,55 @@ class VectorStoreManager:
                 logger.error(f"Error adding documents: {str(e)}")
                 raise
     
-    def similarity_search(self, query: str, k: int = None) -> List[Document]:
-        """Search for similar documents."""
+    def similarity_search_with_threshold(self, query: str, k: int = None, threshold: float = None) -> List[Document]:
+        """Search for similar documents and filter by threshold."""
         if self.vector_store is None:
             raise ValueError("Vector store not initialized")
         
         k = k or config.top_k_results
+        threshold = threshold or config.similarity_threshold
         
         try:
-            results = self.vector_store.similarity_search(query, k=k)
-            logger.info(f"Found {len(results)} similar documents")
-            return results
+            # Chroma returns (document, score) where score is distance (lower is better for distance, higher is better for similarity)
+            # LangChain Chroma wrapper usually returns L2 distance.
+            results_with_scores = self.vector_store.similarity_search_with_score(query, k=k)
+            
+            # Filter by threshold. Note: For distance metrics, "similarity" usually means low distance.
+            # We'll assume the threshold is a minimum similarity or maximum distance depending on the metric.
+            # Standardizing this can be tricky, but for now let's filter based on a simple distance threshold.
+            # Many LangChain retrievers treat 'score_threshold' in search_kwargs for 'similarity_score_threshold' search type.
+            
+            filtered_results = []
+            for doc, score in results_with_scores:
+                logger.info(f"Document score: {score}")
+                # For Chroma with L2 distance, smaller is better.
+                # If we use cosine similarity, larger is better.
+                # Let's check what Chroma uses by default in LangChain. It's usually L2 distance.
+                if score <= (1 - threshold) * 2: # Very rough heuristic for distance vs similarity
+                    filtered_results.append(doc)
+            
+            logger.info(f"Found {len(filtered_results)} documents passing threshold {threshold}")
+            return filtered_results
         except Exception as e:
-            logger.error(f"Error during similarity search: {str(e)}")
+            logger.error(f"Error during similarity search with threshold: {str(e)}")
             raise
     
-    def get_retriever(self, k: int = None):
+    def get_retriever(self, k: int = None, threshold: float = None):
         """Get a retriever for the vector store."""
         if self.vector_store is None:
             raise ValueError("Vector store not initialized")
         
         k = k or config.top_k_results
-        return self.vector_store.as_retriever(search_kwargs={"k": k})
+        threshold = threshold or config.similarity_threshold
+        
+        # Use similarity_score_threshold search type if threshold is provided
+        return self.vector_store.as_retriever(
+            search_type="similarity_score_threshold",
+            search_kwargs={
+                "k": k,
+                "score_threshold": threshold
+            }
+        )
     
     def delete_collection(self) -> None:
         """Delete the vector store collection."""
